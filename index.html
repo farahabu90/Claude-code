@@ -183,11 +183,22 @@ function inPoly(L,x,y){let c=false;for(let i=0,j=L.length-1;i<L.length;j=i++){co
   if((a[1]>y)!==(b[1]>y) && x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]) c=!c;}return c;}
 
 /* ---------- mesh building ---------- */
-function mesh(){return {P:[],F:[],keys:new Map()};}
+/* A vertex is a numbered dot only if it was placed while m.dot was on; detail parts and insets
+   add geometry that appears when the drawing resolves, without adding dots. */
+function mesh(){return {P:[],F:[],D:[],keys:new Map(),dot:true,detail:false};}
 function vid(m,p){const k=p.map(n=>Math.round(n*1e4)).join(',');let i=m.keys.get(k);
-  if(i===undefined){i=m.P.length;m.P.push(p.slice());m.keys.set(k,i);}return i;}
-function face(m,pts,sheet){let v=pts.map(p=>vid(m,p)).filter((id,i,a)=>id!==a[(i+1)%a.length]);
-  if(v.length>=3) m.F.push({v,sheet:!!sheet});}
+  if(i===undefined){i=m.P.length;m.P.push(p.slice());m.D.push(false);m.keys.set(k,i);}if(m.dot)m.D[i]=true;return i;}
+function face(m,pts,sheet,decal){let v=pts.map(p=>vid(m,p)).filter((id,i,a)=>id!==a[(i+1)%a.length]);
+  if(v.length>=3) m.F.push({v,sheet:!!sheet,decal:!!decal,occ:!m.detail&&!decal});}
+function detail(m,fn){const d=m.dot;m.dot=false;m.detail=true;fn();m.dot=d;m.detail=false;}
+/* a panel (window, door) drawn on part of a wall quad q; u runs along q[0]->q[1], v along q[0]->q[3] */
+function inset(m,q,u0,u1,v0,v1,out){const L=(a,b,t)=>add(mul(a,1-t),mul(b,t)),P=(u,v)=>L(L(q[0],q[1],u),L(q[3],q[2],u),v);
+  let pts=[P(u0,v0),P(u1,v0),P(u1,v1),P(u0,v1)],n=unit(cross(sub(pts[1],pts[0]),sub(pts[3],pts[0])));
+  if(!out){const c=mul(add(add(q[0],q[1]),add(q[2],q[3])),.25);out=[c[0],0,c[2]];}
+  if(dot(n,out)<0){pts.reverse();n=mul(n,-1);}
+  const d=m.dot;m.dot=false;face(m,pts.map(p=>add(p,mul(n,.008))),false,true);m.dot=d;}
+const wallQ=(x0,z0,x1,z1,y0,y1)=>[[x0,y0,z0],[x1,y0,z1],[x1,y1,z1],[x0,y1,z0]];
+const ringQ=(R,k,i)=>{const j=(i+1)%R[k].length;return [R[k][i],R[k][j],R[k+1][j],R[k+1][i]];};
 function newell(m,v){let n=[0,0,0];for(let i=0;i<v.length;i++){const a=m.P[v[i]],b=m.P[v[(i+1)%v.length]];
   n[0]+=(a[1]-b[1])*(a[2]+b[2]);n[1]+=(a[2]-b[2])*(a[0]+b[0]);n[2]+=(a[0]-b[0])*(a[1]+b[1]);}return unit(n);}
 function centroid(m,v){let c=[0,0,0];for(const i of v)c=add(c,m.P[i]);return mul(c,1/v.length);}
@@ -200,13 +211,14 @@ function solid(m,build){const from=m.F.length;build();const fs=m.F.slice(from);f
     for(const g of fs){const dn=dot(D,g.n);if(Math.abs(dn)<1e-9)continue;const t=dot(sub(g.o,p),g.n)/dn;if(t<=1e-9)continue;
       const h=sub(add(p,mul(D,t)),g.o);if(inPoly(g.L,dot(h,g.u),dot(h,g.w)))hits++;}
     if(hits&1)f.v.reverse();}}
-function lathe(m,rings,sides,phase=0){
-  const R=rings.map(([r,y])=>Array.from({length:sides},(_,i)=>{const t=phase+i/sides*2*Math.PI;return [r*Math.cos(t),y,r*Math.sin(t)];}));
+function lathe(m,rings,sides,phase=0,ox=0,oz=0){
+  const R=rings.map(([r,y])=>Array.from({length:sides},(_,i)=>{const t=phase+i/sides*2*Math.PI;return [ox+r*Math.cos(t),y,oz+r*Math.sin(t)];}));
+  const d=m.dot;rings.forEach((rg,k)=>{m.dot=d&&rg[2]!==0;R[k].forEach(p=>vid(m,p));});m.dot=false;
   solid(m,()=>{const last=R.length-1;
     if(rings[0][0]>0)face(m,R[0]);
     for(let k=0;k<last;k++)for(let i=0;i<sides;i++){const j=(i+1)%sides;face(m,[R[k][i],R[k][j],R[k+1][j],R[k+1][i]]);}
     if(rings[last][0]>0)face(m,R[last]);});
-  return R;}
+  m.dot=d;return R;}
 function box(m,x0,x1,y0,y1,z0,z1){const p=(x,y,z)=>[x,y,z];solid(m,()=>{
   face(m,[p(x0,y0,z0),p(x1,y0,z0),p(x1,y0,z1),p(x0,y0,z1)]);face(m,[p(x0,y1,z0),p(x1,y1,z0),p(x1,y1,z1),p(x0,y1,z1)]);
   face(m,[p(x0,y0,z0),p(x1,y0,z0),p(x1,y1,z0),p(x0,y1,z0)]);face(m,[p(x0,y0,z1),p(x1,y0,z1),p(x1,y1,z1),p(x0,y1,z1)]);
@@ -239,6 +251,47 @@ const SHEETS=[
    lathe(m,[[.12,0],[.12,.4],[.7,.4],[.3,1],[.55,1],[.2,1.5],[.4,1.5],[0,2.15]],5);}},
  {id:'light',no:'A-07',name:'Harbour Lighthouse',mm:14000,build(m){
    lathe(m,[[.55,0],[.32,1.9],[.48,1.9],[.48,2],[.26,2],[.26,2.45],[.38,2.45],[0,2.85]],6);}},
+ {id:'villa',no:'B-01',cat:'Architecture',name:'Cantilever Villa',mm:11000,build(m){
+   box(m,-.9,.5,0,.6,-.5,.5);box(m,-.4,1.3,.6,1.2,-.6,.6);
+   detail(m,()=>{box(m,1.1,1.2,0,.6,.42,.52);box(m,1.1,1.2,0,.6,-.52,-.42);
+     box(m,-.46,1.36,1.2,1.26,-.66,.66);box(m,-.2,.1,1.26,1.56,-.15,.15);});
+   const uf=wallQ(-.4,.6,1.3,.6,.6,1.2),ub=wallQ(-.4,-.6,1.3,-.6,.6,1.2),ue=wallQ(1.3,-.6,1.3,.6,.6,1.2);
+   inset(m,uf,.06,.94,.35,.78,[0,0,1]);for(const u of [.08,.4,.72])inset(m,ub,u,u+.2,.35,.78,[0,0,-1]);
+   inset(m,ue,.08,.49,.12,.88,[1,0,0]);inset(m,ue,.51,.92,.12,.88,[1,0,0]);
+   const lf=wallQ(-.9,.5,.5,.5,0,.6),lw=wallQ(-.9,-.5,-.9,.5,0,.6),le=wallQ(.5,-.5,.5,.5,0,.6);
+   inset(m,lf,.1,.55,.3,.8,[0,0,1]);inset(m,lf,.68,.86,0,.8,[0,0,1]);inset(m,lw,.2,.8,.3,.8,[-1,0,0]);inset(m,le,.15,.85,0,.85,[1,0,0]);}},
+ {id:'temple',no:'B-02',cat:'Architecture',name:'Doric Temple',mm:16000,build(m){
+   box(m,-1.5,1.5,0,.15,-.9,.9);box(m,-1.4,1.4,1.5,1.72,-.8,.8);
+   solid(m,()=>{const g=x=>[[x,1.72,-.8],[x,1.72,.8],[x,2.2,0]];face(m,g(-1.4));face(m,g(1.4));
+     face(m,[[-1.4,1.72,-.8],[1.4,1.72,-.8],[1.4,1.72,.8],[-1.4,1.72,.8]]);
+     face(m,[[-1.4,1.72,.8],[1.4,1.72,.8],[1.4,2.2,0],[-1.4,2.2,0]]);face(m,[[-1.4,1.72,-.8],[1.4,1.72,-.8],[1.4,2.2,0],[-1.4,2.2,0]]);});
+   detail(m,()=>{box(m,-1.42,1.42,.15,.3,-.82,.82);box(m,-.85,.85,.3,1.5,-.35,.35);
+     const col=(x,z)=>lathe(m,[[.09,.3],[.075,1.5]],6,0,x,z);
+     for(const x of [-1.25,1.25])for(const z of [-.6,-.2,.2,.6])col(x,z);
+     for(const z of [-.6,.6])for(const x of [-.75,-.25,.25,.75])col(x,z);});
+   inset(m,wallQ(.85,-.35,.85,.35,.3,1.5),.3,.7,0,.8,[1,0,0]);}},
+ {id:'chapel',no:'B-03',cat:'Architecture',name:'Hillside Chapel',mm:15000,build(m){
+   const X0=-1.2,X1=.6,Z=.45,H=.9,Rg=1.45;
+   solid(m,()=>{const g=x=>[[x,0,-Z],[x,0,Z],[x,H,Z],[x,Rg,0],[x,H,-Z]];face(m,g(X0));face(m,g(X1));
+     face(m,[[X0,0,-Z],[X1,0,-Z],[X1,0,Z],[X0,0,Z]]);
+     face(m,[[X0,0,Z],[X1,0,Z],[X1,H,Z],[X0,H,Z]]);face(m,[[X0,0,-Z],[X1,0,-Z],[X1,H,-Z],[X0,H,-Z]]);
+     face(m,[[X0,H,Z],[X1,H,Z],[X1,Rg,0],[X0,Rg,0]]);face(m,[[X0,H,-Z],[X1,H,-Z],[X1,Rg,0],[X0,Rg,0]]);});
+   box(m,.6,1.2,0,1.9,-.3,.3);
+   solid(m,()=>{const a=[.6,1.9,-.3],b=[1.2,1.9,-.3],c=[1.2,1.9,.3],d=[.6,1.9,.3],t=[.9,2.95,0];
+     face(m,[a,b,c,d]);face(m,[a,b,t]);face(m,[b,c,t]);face(m,[c,d,t]);face(m,[d,a,t]);});
+   for(const z of [Z,-Z]){const q=wallQ(X0,z,X1,z,0,H);for(const u of [.1,.33,.56,.79])inset(m,q,u,u+.11,.3,.82,[0,0,z]);}
+   const tf=wallQ(1.2,-.3,1.2,.3,0,1.9);inset(m,tf,.3,.7,0,.3,[1,0,0]);inset(m,tf,.38,.62,.42,.66,[1,0,0]);
+   for(const [q,o] of [[tf,[1,0,0]],[wallQ(.6,.3,1.2,.3,0,1.9),[0,0,1]],[wallQ(.6,-.3,1.2,-.3,0,1.9),[0,0,-1]],[wallQ(.6,-.3,.6,.3,0,1.9),[-1,0,0]]])inset(m,q,.25,.75,.79,.94,o);}},
+ {id:'pagoda',no:'B-04',cat:'Architecture',name:'Three-Tier Pagoda',mm:18000,build(m){
+   const R=lathe(m,[[1,0],[1,.12],[.62,.12,0],[.62,.6,0],[1.05,.62],[.52,.85,0],[.52,1.25,0],[.88,1.27],[.42,1.5,0],[.42,1.85,0],[.72,1.87],[.12,2.2,0],[0,2.7]],4,Math.PI/4);
+   for(let i=0;i<4;i++){inset(m,ringQ(R,2,i),.36,.64,0,.8);inset(m,ringQ(R,5,i),.2,.42,.25,.75);inset(m,ringQ(R,5,i),.58,.8,.25,.75);inset(m,ringQ(R,8,i),.36,.64,.25,.75);}}},
+ {id:'rotunda',no:'B-05',cat:'Architecture',name:'Domed Rotunda',mm:21000,build(m){
+   const R=lathe(m,[[.8,0],[.8,.7,0],[.9,.7,0],[.9,.8],[.78,.8,0],[.7,1.15,0],[.5,1.45],[.25,1.62,0],[.12,1.66,0],[.12,1.9,0],[0,2.1]],8,Math.PI/8);
+   for(let i=0;i<8;i++){inset(m,ringQ(R,0,i),.3,.7,i?.28:0,.82);inset(m,ringQ(R,8,i),.25,.75,.2,.85);}}},
+ {id:'tower',no:'B-06',cat:'Architecture',name:'Setback Tower',mm:120000,build(m){
+   const R=lathe(m,[[.5,0],[.5,1.6],[.38,1.6],[.38,2.4],[.24,2.4],[.24,2.9],[0,3.6]],4,Math.PI/4);
+   for(let i=0;i<4;i++){for(const u of [.12,.41,.7])inset(m,ringQ(R,0,i),u,u+.18,.08,.94);
+     for(const u of [.16,.58])inset(m,ringQ(R,2,i),u,u+.26,.1,.9);inset(m,ringQ(R,4,i),.3,.7,.12,.88);}}},
 ];
 
 function finalize(s){
@@ -248,22 +301,32 @@ function finalize(s){
   const c=mul(add(lo,hi),.5);let r=0;for(const p of m.P)r=Math.max(r,len(sub(p,c)));
   m.P=m.P.map(p=>mul(sub(p,c),1/r));m.F.forEach(f=>geom(m,f));
   m.ground=(lo[1]-c[1])/r;m.mm=s.mm/2;
-  const n=m.P.length,adj=Array.from({length:n},()=>new Set());m.E=[];const seen=new Set();
-  for(const f of m.F)for(let i=0;i<f.v.length;i++){const a=f.v[i],b=f.v[(i+1)%f.v.length],k=a<b?a+'_'+b:b+'_'+a;
-    if(!seen.has(k)){seen.add(k);m.E.push([a,b]);adj[a].add(b);adj[b].add(a);}}
+  const n=m.P.length,F=m.F.length,adj=Array.from({length:n},()=>new Set());m.E=[];const seen=new Set();
+  for(const f of m.F){if(!f.occ)continue;for(let i=0;i<f.v.length;i++){const a=f.v[i],b=f.v[(i+1)%f.v.length],k=a<b?a+'_'+b:b+'_'+a;
+    if(!seen.has(k)){seen.add(k);m.E.push([a,b]);if(m.D[a]&&m.D[b]){adj[a].add(b);adj[b].add(a);}}}}
   m.incident=Array.from({length:n},()=>new Set());m.F.forEach((f,fi)=>f.v.forEach(i=>m.incident[i].add(fi)));
+  /* each inset panel rides on the wall it lies against */
+  m.F.forEach(f=>f.decals=[]);
+  m.F.forEach((f,fi)=>{if(!f.decal)return;f.host=-1;m.F.forEach((h,hi)=>{if(f.host>=0||h.decal||dot(f.n,h.n)<.999)return;const d=sub(f.o,h.o);
+    if(Math.abs(dot(d,h.n))<.03&&inPoly(h.L,dot(d,h.u),dot(d,h.w)))f.host=hi;});if(f.host>=0)m.F[f.host].decals.push(fi);});
+  /* which side of face b's plane does face a sit on: used to draw faces back to front */
+  m.side=new Int8Array(F*F);
+  for(let a=0;a<F;a++)for(let b=0;b<F;b++){if(a===b)continue;const B=m.F[b];let mn=1e9,mx=-1e9;
+    for(const i of m.F[a].v){const d=dot(sub(m.P[i],B.o),B.n);mn=Math.min(mn,d);mx=Math.max(mx,d);}
+    m.side[a*F+b]=mx<=1e-4&&mn<-1e-4?-1:mn>=-1e-4&&mx>1e-4?1:0;}
   /* numbering: a walk along the edges that visits every dot once, where one exists */
-  let start=0;for(let i=1;i<n;i++)if(m.P[i][1]<m.P[start][1]-1e-6||(Math.abs(m.P[i][1]-m.P[start][1])<1e-6&&m.P[i][0]<m.P[start][0]))start=i;
+  const dots=[];for(let i=0;i<n;i++)if(m.D[i])dots.push(i);const nd=dots.length;
+  let start=dots[0];for(const i of dots)if(m.P[i][1]<m.P[start][1]-1e-6||(Math.abs(m.P[i][1]-m.P[start][1])<1e-6&&m.P[i][0]<m.P[start][0]))start=i;
   const vis=new Uint8Array(n),free=i=>{let d=0;for(const j of adj[i])if(!vis[j])d++;return d;};
   let path=[start],steps=0;vis[start]=1;
-  const dfs=()=>{if(path.length===n)return true;if(++steps>60000)return false;
+  const dfs=()=>{if(path.length===nd)return true;if(++steps>60000)return false;
     const cand=[...adj[path[path.length-1]]].filter(j=>!vis[j]).sort((a,b)=>free(a)-free(b));
     for(const j of cand){vis[j]=1;path.push(j);if(dfs())return true;path.pop();vis[j]=0;}return false;};
   if(!dfs()){vis.fill(0);path=[start];vis[start]=1;
-    while(path.length<n){const cur=path[path.length-1];let cand=[...adj[cur]].filter(j=>!vis[j]).sort((a,b)=>free(a)-free(b));
-      let nx=cand[0];if(nx===undefined){let bd=1e9;for(let j=0;j<n;j++)if(!vis[j]){const d=len(sub(m.P[j],m.P[cur]));if(d<bd){bd=d;nx=j;}}}
+    while(path.length<nd){const cur=path[path.length-1];let cand=[...adj[cur]].filter(j=>!vis[j]).sort((a,b)=>free(a)-free(b));
+      let nx=cand[0];if(nx===undefined){let bd=1e9;for(const j of dots)if(!vis[j]){const d=len(sub(m.P[j],m.P[cur]));if(d<bd){bd=d;nx=j;}}}
       vis[nx]=1;path.push(nx);}}
-  m.order=path;m.rank=new Int32Array(n);path.forEach((v,k)=>m.rank[v]=k);
+  m.order=path;m.rank=new Int32Array(n).fill(-1);path.forEach((v,k)=>m.rank[v]=k);
   m.jump=path.map((v,k)=>k>0&&!adj[v].has(path[k-1]));
   return m;
 }
@@ -309,7 +372,7 @@ function project(){
 function onFace(f,x,y){ if(Math.abs(f.nw)<0.02)return null;
   const dx=x-f.ox,dy=y-f.oy,a=(dx*f.vy-dy*f.vx)/f.det,b=(f.ux*dy-f.uy*dx)/f.det;
   return inPoly(f.L,a,b)?{a,b,depth:f.d+a*f.du+b*f.dv}:null;}
-function visible(i){for(let fi=0;fi<M.F.length;fi++){if(M.incident[i].has(fi))continue;
+function visible(i){for(let fi=0;fi<M.F.length;fi++){if(!M.F[fi].occ||M.incident[i].has(fi))continue;
   const h=onFace(M.F[fi],SX[i],SY[i]);if(h&&h.depth>SZ[i]+2e-3)return false;}return true;}
 function pickFace(x,y){let best=null;M.F.forEach((f,fi)=>{if(!f.sheet&&f.nw<=0)return;const h=onFace(f,x,y);
   if(h&&(!best||h.depth>best.depth)){best=h;best.fi=fi;}});return best;}
@@ -367,12 +430,26 @@ function paintOps(f,list){
   }
   ctx.restore();ctx.globalAlpha=1;
 }
+function drawFace(f,fi,alpha,lw){tracePoly(f);ctx.globalAlpha=alpha;ctx.fillStyle=col.face;ctx.fill();
+  if(faceOps[fi].length&&Math.abs(f.nw)>.02&&alpha>.99)paintOps(f,faceOps[fi]);
+  ctx.globalAlpha=alpha;ctx.strokeStyle=col.ink;ctx.lineWidth=lw;tracePoly(f);ctx.stroke();}
 function drawSolid(alpha,clean){
-  const order=M.F.map((f,i)=>i).filter(i=>M.F[i].sheet||M.F[i].nw>0).sort((a,b)=>M.F[a].d-M.F[b].d);
+  const F=M.F.length,vis=[];
+  M.F.forEach((f,i)=>{if(f.decal||!(f.sheet||f.nw>0))return;f.bx0=f.by0=1e9;f.bx1=f.by1=-1e9;
+    for(const v of f.v){f.bx0=Math.min(f.bx0,SX[v]);f.bx1=Math.max(f.bx1,SX[v]);f.by0=Math.min(f.by0,SY[v]);f.by1=Math.max(f.by1,SY[v]);}vis.push(i);});
+  vis.sort((a,b)=>M.F[a].d-M.F[b].d);
+  /* back-to-front: where two faces overlap on screen, the one behind the other's plane goes first */
+  const n=vis.length,pre=vis.map(()=>[]);
+  for(let a=0;a<n;a++){const A=M.F[vis[a]],sA=A.nw>0?1:-1;for(let b=a+1;b<n;b++){const B=M.F[vis[b]];
+    if(A.bx1<=B.bx0||B.bx1<=A.bx0||A.by1<=B.by0||B.by1<=A.by0)continue;
+    const sB=B.nw>0?1:-1,ab=M.side[vis[a]*F+vis[b]],ba=M.side[vis[b]*F+vis[a]];
+    const aFirst=ab===-sB||ba===sA,bFirst=ba===-sA||ab===sB;
+    if(aFirst&&!bFirst)pre[b].push(a);else if(bFirst&&!aFirst)pre[a].push(b);}}
+  const mark=new Uint8Array(n),out=[];
+  const visit=i=>{if(mark[i])return;mark[i]=1;for(const j of pre[i])visit(j);out.push(vis[i]);};
+  for(let i=0;i<n;i++)visit(i);
   ctx.lineJoin='round';
-  for(const fi of order){const f=M.F[fi];tracePoly(f);ctx.globalAlpha=alpha;ctx.fillStyle=col.face;ctx.fill();
-    if(faceOps[fi].length&&Math.abs(f.nw)>.02&&alpha>.99)paintOps(f,faceOps[fi]);
-    ctx.globalAlpha=alpha;ctx.strokeStyle=col.ink;ctx.lineWidth=1.6;tracePoly(f);ctx.stroke();}
+  for(const fi of out){const f=M.F[fi];drawFace(f,fi,alpha,1.6);for(const di of f.decals){const d=M.F[di];if(d.nw>0)drawFace(d,di,alpha,1.1);}}
   if(clean){ctx.globalAlpha=1;return;}
   /* hidden lines, dashed, as on a working drawing */
   ctx.globalAlpha=.22*alpha;ctx.setLineDash([5,5]);ctx.lineWidth=1;ctx.beginPath();
@@ -396,7 +473,7 @@ function drawPath(alphaJump){
 }
 function drawDots(alpha,now){
   const N=M.order.length;ctx.textAlign='center';ctx.textBaseline='middle';
-  for(let i=0;i<M.P.length;i++){const k=M.rank[i],x=SX[i],y=SY[i],v=VIS[i],cur=k===st.done-1;
+  for(let i=0;i<M.P.length;i++){const k=M.rank[i];if(k<0)continue;const x=SX[i],y=SY[i],v=VIS[i],cur=k===st.done-1;
     let dx=x-cx,dy=y-cy;const l=Math.hypot(dx,dy)||1;dx/=l;dy/=l;if(l<4){dx=.7;dy=-.7;}
     if(k<st.done&&!cur){ctx.globalAlpha=alpha*(v?1:.4);ctx.fillStyle=col.ink;ctx.beginPath();ctx.arc(x,y,2.4,0,7);ctx.fill();
       if(v){ctx.globalAlpha=alpha*.45;ctx.font='500 9px '+MONO;ctx.fillText(String(k+1).padStart(2,'0'),x+dx*12,y+dy*12);}continue;}
@@ -421,7 +498,7 @@ function drawDots(alpha,now){
 
 function render(now){
   const onCanvas=st.mode==='colour'&&st.canvas;project();drawSheet(onCanvas);
-  if(st.mode==='connect'){for(let i=0;i<M.P.length;i++)VIS[i]=visible(i);drawPath(1);drawDots(1,now);}
+  if(st.mode==='connect'){for(let i=0;i<M.P.length;i++)VIS[i]=M.rank[i]>=0&&visible(i);drawPath(1);drawDots(1,now);}
   else if(st.mode==='reveal'){const t=Math.min(1,(now-st.revealAt)/1700),e=t*t*(3-2*t);
     drawSolid(e);drawPath(1-e);for(let i=0;i<M.P.length;i++)VIS[i]=true;drawDots(1-e,now);
     if(t>=1){st.mode='colour';hud();}}
@@ -464,7 +541,7 @@ function hud(){
     const b=document.createElement('button');b.className='sheet';b.setAttribute('aria-current',i===st.sheet);
     b.innerHTML='<b></b><span><em></em><br><small></small></span><small></small>';
     b.children[0].textContent=sh.no;b.querySelector('em').textContent=ok?sh.name:'Unidentified';
-    b.querySelector('span small').textContent=n+' points';b.children[2].textContent=ok?'Resolved':(sv.done?sv.done+' / '+n:'New');
+    b.querySelector('span small').textContent=(sh.cat||'Object')+' · '+n+' points';b.children[2].textContent=ok?'Resolved':(sv.done?sv.done+' / '+n:'New');
     b.onclick=()=>{loadSheet(i);toggleDrawer(false);};list.appendChild(b);});
   dirty=true;
 }
@@ -502,7 +579,7 @@ function connect(){
   if(st.done===M.order.length){st.rubber=null;st.mode='reveal';st.revealAt=performance.now();chime();toast(SHEETS[st.sheet].no+' resolved: '+SHEETS[st.sheet].name+'. Now colour it in.',4200);}
   hud();
 }
-function dotAt(x,y,r){let best=-1,bd=r*r;for(let i=0;i<M.P.length;i++){if(!VIS[i]&&M.rank[i]!==st.done-1)continue;
+function dotAt(x,y,r){let best=-1,bd=r*r;for(let i=0;i<M.P.length;i++){if(M.rank[i]<0||(!VIS[i]&&M.rank[i]!==st.done-1))continue;
   const d=(SX[i]-x)**2+(SY[i]-y)**2;if(d<bd){bd=d;best=i;}}return best;}
 const ptrs=new Map();let drag=null,pinch=null;const view={t0:0};
 function pos(e){const r=cv.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];}
