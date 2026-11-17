@@ -417,7 +417,7 @@ function ribbon(o){const p=o.pts,n=p.length/2,a=o.al||.66,W=o.pw,L=[],R=[];let n
   ctx.fillStyle=o.c;
   if(o.pen&&n>1){for(let i=0;i<n-1;i++){ctx.globalAlpha=Math.min(1,a*(o.pa?(o.pa[i]+o.pa[i+1])/2:1));ctx.beginPath();quad(i);if(!i)dot(0);if(i===n-2)dot(n-1);ctx.fill();}}
   else{ctx.globalAlpha=Math.min(1,a*(o.pa?o.pa[0]:1));ctx.beginPath();for(let i=0;i<n;i++){if(i<n-1)quad(i);dot(i);}ctx.fill();}}
-function strokeOp(o){if(o.pw&&o.pw.length*2===o.pts.length)return ribbon(o);const a=o.al||.66,p=o.pts,w=o.w;ctx.strokeStyle=ctx.fillStyle=o.c;ctx.lineWidth=w;ctx.lineCap=ctx.lineJoin='round';
+function strokeOp(o){if(o.pen&&o.pw&&o.pw.length*2===o.pts.length)return ribbon(o);const a=o.al||.66,p=o.pts,w=o.w;ctx.strokeStyle=ctx.fillStyle=o.c;ctx.lineWidth=w;ctx.lineCap=ctx.lineJoin='round';
   ctx.globalAlpha=o.pen?a*.6:a;
   if(p.length<=2){ctx.beginPath();ctx.arc(p[0],p[1],w/2,0,7);ctx.fill();return;}
   ctx.beginPath();ctx.moveTo(p[0],p[1]);for(let i=2;i<p.length;i+=2)ctx.lineTo(p[i],p[i+1]);ctx.stroke();
@@ -576,25 +576,24 @@ function toggleDrawer(open){const d=$('drawer');d.hidden=open===undefined?!d.hid
 const snd={on:store.get('sound')!==false,ac:null};
 function audio(){if(!snd.on)return null;const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return null;
   if(!snd.ac){try{const ac=snd.ac=new AC(),sr=ac.sampleRate,n=sr*3,buf=snd.buf=ac.createBuffer(1,n,sr),d=buf.getChannelData(0);
-    /* graphite on paper: bright dry noise broken into irregular micro-grains (the nib catching on paper fibres) */
-    const env=new Float32Array(n),a1=1-Math.exp(-2*Math.PI*110/sr),a2=1-Math.exp(-2*Math.PI*9/sr);let e=0,sl=0,sq=0,sq2=0;
-    for(let i=0;i<n;i++){const w=Math.random()*2-1;e+=a1*(w-e);sl+=a2*(w-sl);env[i]=e;d[i]=sl;sq+=e*e;sq2+=sl*sl;}
-    const r1=Math.sqrt(sq/n)||1,r2=Math.sqrt(sq2/n)||1;
-    for(let i=0;i<n;i++){const g=Math.min(2.6,Math.pow(Math.abs(env[i])/r1,1.6)),slow=.8+.2*Math.max(-1,Math.min(1,d[i]/r2));
-      d[i]=(Math.random()*2-1)*(.22+.78*g)*slow*.3;}
-    const src=snd.src=ac.createBufferSource();src.buffer=buf;src.loop=true;
-    const hp=snd.bp=ac.createBiquadFilter();hp.type='highpass';hp.frequency.value=1100;hp.Q.value=.7;
-    const pk=ac.createBiquadFilter();pk.type='peaking';pk.frequency.value=3400;pk.Q.value=.8;pk.gain.value=7;
-    const lp=ac.createBiquadFilter();lp.type='lowpass';lp.frequency.value=9000;
+    for(let i=0;i<n;i++)d[i]=(Math.random()*2-1)*.5;
+    const src=ac.createBufferSource();src.buffer=buf;src.loop=true;
+    const hp=snd.bp=ac.createBiquadFilter();hp.type='highpass';hp.frequency.value=1500;hp.Q.value=.6;
+    const pk=ac.createBiquadFilter();pk.type='peaking';pk.frequency.value=4000;pk.Q.value=.7;pk.gain.value=5;
+    const lp=ac.createBiquadFilter();lp.type='lowpass';lp.frequency.value=8000;
     const g=snd.sg=ac.createGain();g.gain.value=0;src.connect(hp);hp.connect(pk);pk.connect(lp);lp.connect(g);g.connect(ac.destination);src.start();
   }catch(e){snd.ac=null;return null;}}
   if(snd.ac.state==='suspended')snd.ac.resume().catch(()=>{});return snd.ac;}
 /* pencil on paper: filtered noise whose loudness and brightness follow the speed of the nib */
-function scratch(speed,press){const ac=audio();if(!ac)return;const t=ac.currentTime,v=Math.min(.55,.12+speed*.28)*(press?.55+.9*press:1),g=snd.sg.gain;
-  g.cancelScheduledValues(t);g.setTargetAtTime(v,t,.035);g.setTargetAtTime(0,t+.09,.07);
-  snd.src.playbackRate.setTargetAtTime(.85+Math.min(.45,speed*.3),t,.08);   /* faster strokes sound higher */
-  snd.bp.frequency.setTargetAtTime(1000+Math.min(900,speed*500),t,.08);}
-function hush(){if(snd.ac){const t=snd.ac.currentTime;snd.sg.gain.cancelScheduledValues(t);snd.sg.gain.setTargetAtTime(0,t,.09);}}
+/* The pencil hiss is one continuous sound. Stroke speed is smoothed and the volume is nudged on a
+   steady clock, so jitter in the pointer events never reaches the ear as rattle. */
+function scratch(speed,press){if(!audio())return;snd.sp=(snd.sp||0)*.8+Math.min(3,speed)*.2;snd.pr=press||.6;snd.last=performance.now();
+  if(!snd.timer)snd.timer=setInterval(()=>{const idle=performance.now()-snd.last,t=snd.ac.currentTime;
+    if(idle>80)snd.sp*=.55;
+    const v=snd.sp<.015?0:Math.min(.4,.07+snd.sp*.2)*(.55+.9*snd.pr);
+    snd.sg.gain.setTargetAtTime(v,t,.07);snd.bp.frequency.setTargetAtTime(1400+Math.min(700,snd.sp*350),t,.2);
+    if(idle>700){clearInterval(snd.timer);snd.timer=0;snd.sg.gain.setTargetAtTime(0,t,.05);}},40);}
+function hush(){snd.sp=0;if(snd.ac)snd.sg.gain.setTargetAtTime(0,snd.ac.currentTime,.08);}
 function burst(dur,vol,freq){const ac=audio();if(!ac)return;const t=ac.currentTime,s=ac.createBufferSource(),f=ac.createBiquadFilter(),g=ac.createGain();
   s.buffer=snd.buf;f.type='bandpass';f.frequency.value=freq;f.Q.value=.8;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+dur);
   s.connect(f);f.connect(g);g.connect(ac.destination);s.start(t,Math.random());s.stop(t+dur+.02);}
@@ -632,7 +631,7 @@ function penFeel(e){
   drag.pr=pr;return [+w.toFixed(2),+a.toFixed(2)];}
 function paintAt(x,y,e){
   const stylus=e&&e.pointerType==='pen',mk=f=>{const o={f,k:'stroke',c:st.colour,w:nib(),pen:st.tool==='pencil'?1:0,al:drag.al,pts:[],g:opGroup};
-    if(stylus){o.pw=[];if(o.pen)o.pa=[];}return o;};
+    if(stylus&&o.pen){o.pw=[];o.pa=[];}return o;};
   let a,b;
   if(drag.pl){const q=planeHit(drag.pl,x,y);if(!q)return;
     if(!drag.op){drag.op=mk(-1);drag.op.pl=drag.pl.pl;pushOp(drag.op);}a=q[0];b=q[1];}
