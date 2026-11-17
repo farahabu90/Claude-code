@@ -559,23 +559,25 @@ function toggleDrawer(open){const d=$('drawer');d.hidden=open===undefined?!d.hid
 /* ---------- sound: everything is synthesised, no audio files ---------- */
 const snd={on:store.get('sound')!==false,ac:null};
 function audio(){if(!snd.on)return null;const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return null;
-  if(!snd.ac){try{const ac=snd.ac=new AC(),n=ac.sampleRate*3,buf=snd.buf=ac.createBuffer(1,n,ac.sampleRate),d=buf.getChannelData(0);
-    let b0=0,b1=0,b2=0;for(let i=0;i<n;i++){const w=Math.random()*2-1;b0=.99765*b0+w*.099046;b1=.963*b1+w*.2965164;b2=.57*b2+w*1.0526913;d[i]=(b0+b1+b2+w*.1848)*.22;}
-    const src=ac.createBufferSource();src.buffer=buf;src.loop=true;
-    const bp=snd.bp=ac.createBiquadFilter();bp.type='bandpass';bp.frequency.value=1000;bp.Q.value=.45;
-    const lp=ac.createBiquadFilter();lp.type='lowpass';lp.frequency.value=2600;
-    const grain=ac.createGain();grain.gain.value=.7;
-    const g=snd.sg=ac.createGain();g.gain.value=0;src.connect(bp);bp.connect(lp);lp.connect(grain);grain.connect(g);g.connect(ac.destination);src.start();
-    /* paper tooth: a slow wobble in loudness */
-    const ls=ac.createBufferSource();ls.buffer=buf;ls.loop=true;ls.playbackRate.value=.37;
-    const lf=ac.createBiquadFilter();lf.type='lowpass';lf.frequency.value=14;const lg=ac.createGain();lg.gain.value=2.2;
-    ls.connect(lf);lf.connect(lg);lg.connect(grain.gain);ls.start();
+  if(!snd.ac){try{const ac=snd.ac=new AC(),sr=ac.sampleRate,n=sr*3,buf=snd.buf=ac.createBuffer(1,n,sr),d=buf.getChannelData(0);
+    /* graphite on paper: bright dry noise broken into irregular micro-grains (the nib catching on paper fibres) */
+    const env=new Float32Array(n),a1=1-Math.exp(-2*Math.PI*110/sr),a2=1-Math.exp(-2*Math.PI*9/sr);let e=0,sl=0,sq=0,sq2=0;
+    for(let i=0;i<n;i++){const w=Math.random()*2-1;e+=a1*(w-e);sl+=a2*(w-sl);env[i]=e;d[i]=sl;sq+=e*e;sq2+=sl*sl;}
+    const r1=Math.sqrt(sq/n)||1,r2=Math.sqrt(sq2/n)||1;
+    for(let i=0;i<n;i++){const g=Math.min(2.6,Math.pow(Math.abs(env[i])/r1,1.6)),slow=.8+.2*Math.max(-1,Math.min(1,d[i]/r2));
+      d[i]=(Math.random()*2-1)*(.22+.78*g)*slow*.3;}
+    const src=snd.src=ac.createBufferSource();src.buffer=buf;src.loop=true;
+    const hp=snd.bp=ac.createBiquadFilter();hp.type='highpass';hp.frequency.value=1100;hp.Q.value=.7;
+    const pk=ac.createBiquadFilter();pk.type='peaking';pk.frequency.value=3400;pk.Q.value=.8;pk.gain.value=7;
+    const lp=ac.createBiquadFilter();lp.type='lowpass';lp.frequency.value=9000;
+    const g=snd.sg=ac.createGain();g.gain.value=0;src.connect(hp);hp.connect(pk);pk.connect(lp);lp.connect(g);g.connect(ac.destination);src.start();
   }catch(e){snd.ac=null;return null;}}
   if(snd.ac.state==='suspended')snd.ac.resume().catch(()=>{});return snd.ac;}
 /* pencil on paper: filtered noise whose loudness and brightness follow the speed of the nib */
-function scratch(speed){const ac=audio();if(!ac)return;const t=ac.currentTime,v=Math.min(.5,.1+speed*.2),g=snd.sg.gain;
-  g.cancelScheduledValues(t);g.setTargetAtTime(v,t,.06);g.setTargetAtTime(0,t+.1,.12);
-  snd.bp.frequency.setTargetAtTime(850+Math.min(700,speed*350),t,.12);}
+function scratch(speed){const ac=audio();if(!ac)return;const t=ac.currentTime,v=Math.min(.55,.12+speed*.28),g=snd.sg.gain;
+  g.cancelScheduledValues(t);g.setTargetAtTime(v,t,.035);g.setTargetAtTime(0,t+.09,.07);
+  snd.src.playbackRate.setTargetAtTime(.85+Math.min(.45,speed*.3),t,.08);   /* faster strokes sound higher */
+  snd.bp.frequency.setTargetAtTime(1000+Math.min(900,speed*500),t,.08);}
 function hush(){if(snd.ac){const t=snd.ac.currentTime;snd.sg.gain.cancelScheduledValues(t);snd.sg.gain.setTargetAtTime(0,t,.09);}}
 function burst(dur,vol,freq){const ac=audio();if(!ac)return;const t=ac.currentTime,s=ac.createBufferSource(),f=ac.createBiquadFilter(),g=ac.createGain();
   s.buffer=snd.buf;f.type='bandpass';f.frequency.value=freq;f.Q.value=.8;g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+dur);
