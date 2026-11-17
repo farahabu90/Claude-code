@@ -394,7 +394,21 @@ function drawSheet(){
 }
 
 function tracePoly(f){ctx.beginPath();f.v.forEach((i,k)=>k?ctx.lineTo(SX[i],SY[i]):ctx.moveTo(SX[i],SY[i]));ctx.closePath();}
-function strokeOp(o){const a=o.al||.66,p=o.pts,w=o.w;ctx.strokeStyle=ctx.fillStyle=o.c;ctx.lineWidth=w;ctx.lineCap=ctx.lineJoin='round';
+/* A stroke made with a stylus carries a width per point (pressure and tilt), and for the pencil a
+   darkness per point. It is drawn as a ribbon: one filled shape for the marker so overlaps inside a
+   stroke do not darken, and per-segment pieces for the pencil so its darkness can vary along the line. */
+function ribbon(o){const p=o.pts,n=p.length/2,a=o.al||.66,W=o.pw,L=[],R=[];let nx=0,ny=1;
+  for(let i=0;i<n;i++){const j=Math.min(n-1,i+1),k=Math.max(0,i-1),dx=p[2*j]-p[2*k],dy=p[2*j+1]-p[2*k+1],l=Math.hypot(dx,dy);
+    if(l>1e-6){nx=-dy/l;ny=dx/l;}const h=o.w*W[i]/2;L.push(p[2*i]+nx*h,p[2*i+1]+ny*h);R.push(p[2*i]-nx*h,p[2*i+1]-ny*h);}
+  const quad=i=>{const q=[L[2*i],L[2*i+1],L[2*i+2],L[2*i+3],R[2*i+2],R[2*i+3],R[2*i],R[2*i+1]];
+    let ar=0;for(let m=0;m<4;m++){const m2=(m+1)%4;ar+=q[2*m]*q[2*m2+1]-q[2*m2]*q[2*m+1];}
+    if(ar<0){ctx.moveTo(q[6],q[7]);ctx.lineTo(q[4],q[5]);ctx.lineTo(q[2],q[3]);ctx.lineTo(q[0],q[1]);}
+    else{ctx.moveTo(q[0],q[1]);ctx.lineTo(q[2],q[3]);ctx.lineTo(q[4],q[5]);ctx.lineTo(q[6],q[7]);}ctx.closePath();};
+  const dot=i=>{const r=o.w*W[i]/2;ctx.moveTo(p[2*i]+r,p[2*i+1]);ctx.arc(p[2*i],p[2*i+1],r,0,6.2832);};
+  ctx.fillStyle=o.c;
+  if(o.pen&&n>1){for(let i=0;i<n-1;i++){ctx.globalAlpha=Math.min(1,a*(o.pa?(o.pa[i]+o.pa[i+1])/2:1));ctx.beginPath();quad(i);if(!i)dot(0);if(i===n-2)dot(n-1);ctx.fill();}}
+  else{ctx.globalAlpha=Math.min(1,a*(o.pa?o.pa[0]:1));ctx.beginPath();for(let i=0;i<n;i++){if(i<n-1)quad(i);dot(i);}ctx.fill();}}
+function strokeOp(o){if(o.pw&&o.pw.length*2===o.pts.length)return ribbon(o);const a=o.al||.66,p=o.pts,w=o.w;ctx.strokeStyle=ctx.fillStyle=o.c;ctx.lineWidth=w;ctx.lineCap=ctx.lineJoin='round';
   ctx.globalAlpha=o.pen?a*.6:a;
   if(p.length<=2){ctx.beginPath();ctx.arc(p[0],p[1],w/2,0,7);ctx.fill();return;}
   ctx.beginPath();ctx.moveTo(p[0],p[1]);for(let i=2;i<p.length;i+=2)ctx.lineTo(p[i],p[i+1]);ctx.stroke();
@@ -567,7 +581,7 @@ function audio(){if(!snd.on)return null;const AC=window.AudioContext||window.web
   }catch(e){snd.ac=null;return null;}}
   if(snd.ac.state==='suspended')snd.ac.resume().catch(()=>{});return snd.ac;}
 /* pencil on paper: filtered noise whose loudness and brightness follow the speed of the nib */
-function scratch(speed){const ac=audio();if(!ac)return;const t=ac.currentTime,v=Math.min(.55,.12+speed*.28),g=snd.sg.gain;
+function scratch(speed,press){const ac=audio();if(!ac)return;const t=ac.currentTime,v=Math.min(.55,.12+speed*.28)*(press?.55+.9*press:1),g=snd.sg.gain;
   g.cancelScheduledValues(t);g.setTargetAtTime(v,t,.035);g.setTargetAtTime(0,t+.09,.07);
   snd.src.playbackRate.setTargetAtTime(.85+Math.min(.45,speed*.3),t,.08);   /* faster strokes sound higher */
   snd.bp.frequency.setTargetAtTime(1000+Math.min(900,speed*500),t,.08);}
@@ -596,13 +610,28 @@ function pushOp(o){st.ops.push(o);if(o.f<0)freeOps.push(o);else if(o.k==='clear'
 const drawing=()=>st.tool==='marker'||st.tool==='pencil';
 /* stroke width in model units: the marker is a broad nib, the pencil a fine point */
 const nib=()=>+((st.tool==='pencil'?1.2+$('size').value*.05:+$('size').value)/S).toFixed(4);
-function paintAt(x,y){
+/* Stylus feel. Pressure: the marker spreads, the pencil gets darker and a little heavier.
+   Tilt: past a normal writing angle the marker lays down a broad chisel stroke, and the pencil
+   shades wide and soft with the side of the lead. Returns [width multiplier, darkness multiplier]. */
+function penFeel(e){
+  const pr=e.pressure>0?Math.min(1,e.pressure):.5;let t=0;
+  if(typeof e.altitudeAngle==='number')t=1-e.altitudeAngle/(Math.PI/2);
+  else if(e.tiltX||e.tiltY){const m=Math.hypot(Math.tan(e.tiltX*Math.PI/180),Math.tan(e.tiltY*Math.PI/180));t=1-Math.atan(1/m)/(Math.PI/2);}
+  const lean=Math.max(0,Math.min(1,(t-.45)/.4));
+  let w,a;if(st.tool==='pencil'){w=(.6+.9*pr)*(1+7*lean*lean);a=(.25+.95*pr)*(1-.55*lean);}else{w=(.45+1.1*pr)*(1+1.3*lean);a=1;}
+  if(drag.sw){w=drag.sw=drag.sw*.6+w*.4;a=drag.sa=drag.sa*.6+a*.4;}else{drag.sw=w;drag.sa=a;}
+  drag.pr=pr;return [+w.toFixed(2),+a.toFixed(2)];}
+function paintAt(x,y,e){
+  const stylus=e&&e.pointerType==='pen',mk=f=>{const o={f,k:'stroke',c:st.colour,w:nib(),pen:st.tool==='pencil'?1:0,al:drag.al,pts:[],g:opGroup};
+    if(stylus){o.pw=[];if(o.pen)o.pa=[];}return o;};
+  let a,b;
   if(drag.pl){const q=planeHit(drag.pl,x,y);if(!q)return;
-    if(!drag.op){drag.op={f:-1,k:'stroke',c:st.colour,w:nib(),pen:st.tool==='pencil'?1:0,al:drag.al,pl:drag.pl.pl,pts:[],g:opGroup};pushOp(drag.op);}
-    drag.op.pts.push(+q[0].toFixed(3),+q[1].toFixed(3));dirty=true;return;}
-  const h=pickFace(x,y);if(!h){drag.op=null;return;}
-  if(!drag.op||drag.op.f!==h.fi){drag.op={f:h.fi,k:'stroke',c:st.colour,w:nib(),pen:st.tool==='pencil'?1:0,al:drag.al,pts:[],g:opGroup};pushOp(drag.op);}
-  drag.op.pts.push(+h.a.toFixed(3),+h.b.toFixed(3));dirty=true;
+    if(!drag.op){drag.op=mk(-1);drag.op.pl=drag.pl.pl;pushOp(drag.op);}a=q[0];b=q[1];}
+  else{const h=pickFace(x,y);if(!h){drag.op=null;return;}
+    if(!drag.op||drag.op.f!==h.fi){drag.op=mk(h.fi);pushOp(drag.op);}a=h.a;b=h.b;}
+  const o=drag.op;o.pts.push(+a.toFixed(3),+b.toFixed(3));
+  if(o.pw){const f=penFeel(e);o.pw.push(f[0]);if(o.pa)o.pa.push(f[1]);}
+  dirty=true;
 }
 cv.addEventListener('pointerdown',e=>{
   if(!$('drawer').hidden)toggleDrawer(false);
@@ -626,12 +655,12 @@ cv.addEventListener('pointerdown',e=>{
     const w=!wantsOrbit&&st.plane!=='form'&&(drawing()||st.tool==='fill')?workPlane():null;
     if(w){const q=planeHit(w,x,y),r=w.rect;drag=null;
       if(!q)toast(st.plane==='ground'?'The ground is edge-on from here. Tilt the view to draw on it.':'The backdrop is edge-on from here. Lower the view to draw on it.',2800);
-      else if(drawing()){opGroup++;drag={type:'paint',op:null,pl:w,al,px:x,py:y,pt:e.timeStamp};paintAt(x,y);scratch(.4);}
+      else if(drawing()){opGroup++;drag={type:'paint',op:null,pl:w,al,px:x,py:y,pt:e.timeStamp};paintAt(x,y,e);scratch(.4,drag.pr);}
       else if(q[0]>=r[0]&&q[0]<=r[2]&&q[1]>=r[1]&&q[1]<=r[3]){opGroup++;pushOp({f:-1,k:'fill',c:st.colour,al,pl:w.pl,rect:r,g:opGroup});swish();save();}
     }else{
       const h=wantsOrbit?null:pickFace(x,y);
       if(!h)drag=orbit;
-      else if(drawing()){opGroup++;drag={type:'paint',op:null,al,px:x,py:y,pt:e.timeStamp};paintAt(x,y);scratch(.4);}
+      else if(drawing()){opGroup++;drag={type:'paint',op:null,al,px:x,py:y,pt:e.timeStamp};paintAt(x,y,e);scratch(.4,drag.pr);}
       else{opGroup++;pushOp(st.tool==='fill'?{f:h.fi,k:'fill',c:st.colour,al,g:opGroup}:st.tool==='hatch'?{f:h.fi,k:'hatch',c:st.colour,al,p:st.hatch,g:opGroup}:{f:h.fi,k:'clear',g:opGroup});swish();save();drag=null;}
     }
   }else drag=orbit;
@@ -645,8 +674,8 @@ cv.addEventListener('pointermove',e=>{
   if(drag.type==='orbit'){turn(x-drag.x,y-drag.y);drag.x=x;drag.y=y;}
   else if(drag.type==='draw'){st.rubber=[x,y];
     if(st.mode==='connect'&&st.done<M.order.length){const n=M.order[st.done];if(VIS[n]&&Math.hypot(SX[n]-x,SY[n]-y)<(e.pointerType==='mouse'?12:18))connect();}}
-  else if(drag.type==='paint'){const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];for(const c of (evs.length?evs:[e])){const q=pos(c);paintAt(q[0],q[1]);}
-    const sp=Math.hypot(x-drag.px,y-drag.py)/Math.max(1,e.timeStamp-drag.pt);drag.px=x;drag.py=y;drag.pt=e.timeStamp;if(drag.op&&sp>.01)scratch(sp);}
+  else if(drag.type==='paint'){const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];for(const c of (evs.length?evs:[e])){const q=pos(c);paintAt(q[0],q[1],c);}
+    const sp=Math.hypot(x-drag.px,y-drag.py)/Math.max(1,e.timeStamp-drag.pt);drag.px=x;drag.py=y;drag.pt=e.timeStamp;if(drag.op&&sp>.01)scratch(sp,drag.pr);}
   dirty=true;
 });
 function up(e){ptrs.delete(e.pointerId);if(ptrs.size<2)pinch=null;
