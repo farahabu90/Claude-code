@@ -216,11 +216,11 @@ function inPoly(L,x,y){let c=false;for(let i=0,j=L.length-1;i<L.length;j=i++){co
 /* A vertex is a numbered dot only if it was placed while m.dot was on; detail parts and insets
    add geometry that appears when the drawing resolves, without adding dots. */
 function mesh(){return {P:[],F:[],D:[],keys:new Map(),dot:true,detail:false};}
-function vid(m,p){const k=p.map(n=>Math.round(n*1e4)).join(',');let i=m.keys.get(k);
+function vid(m,p){if(m.xf)p=m.xf(p);const k=p.map(n=>Math.round(n*1e4)).join(',');let i=m.keys.get(k);
   if(i===undefined){i=m.P.length;m.P.push(p.slice());m.D.push(false);m.keys.set(k,i);}if(m.dot)m.D[i]=true;return i;}
 function face(m,pts,sheet,decal){let v=pts.map(p=>vid(m,p)).filter((id,i,a)=>id!==a[(i+1)%a.length]);
   if(v.length>=3) m.F.push({v,sheet:!!sheet,decal:!!decal,occ:!m.detail&&!decal});}
-function detail(m,fn){const d=m.dot;m.dot=false;m.detail=true;fn();m.dot=d;m.detail=false;}
+function detail(m,fn){const d=m.dot,dt=m.detail;m.dot=false;m.detail=true;fn();m.dot=d;m.detail=dt;}
 /* a panel (window, door) drawn on part of a wall quad q; u runs along q[0]->q[1], v along q[0]->q[3] */
 function inset(m,q,u0,u1,v0,v1,out){const L=(a,b,t)=>add(mul(a,1-t),mul(b,t)),P=(u,v)=>L(L(q[0],q[1],u),L(q[3],q[2],u),v);
   let pts=[P(u0,v0),P(u1,v0),P(u1,v1),P(u0,v1)],n=unit(cross(sub(pts[1],pts[0]),sub(pts[3],pts[0])));
@@ -324,6 +324,46 @@ const SHEETS=[
      for(const u of [.16,.58])inset(m,ringQ(R,2,i),u,u+.26,.1,.9);inset(m,ringQ(R,4,i),.3,.7,.12,.88);}}},
 ];
 
+/* ---------- scenes: several pieces placed on one site, numbered as one long walk ---------- */
+/* place a sheet's model at (x,z), scaled and turned about the vertical; as scenery it adds no dots */
+function place(m,id,x,z,sc=1,r=0,scenery=false){const prev=m.xf,c=Math.cos(r),sn=Math.sin(r);
+  m.xf=p=>[x+sc*(c*p[0]-sn*p[2]),sc*p[1],z+sc*(sn*p[0]+c*p[2])];
+  const b=SHEETS.find(q=>q.id===id).build;if(scenery)detail(m,()=>b(m));else b(m);m.xf=prev;}
+const tree=(m,x,z,sc)=>place(m,'pine',x,z,sc,x*3,true);
+SHEETS.push(
+ {id:'harbour',no:'C-01',cat:'Scene',name:'Harbour Front',mm:30000,build(m){
+   place(m,'light',1.7,-.9,1);
+   place(m,'cabin',-1.5,-1,.55,.3);
+   place(m,'boat',-.9,1,.5,.4);place(m,'boat',1.3,1.2,.42,-.5);
+   place(m,'cabin',-.35,-1.45,.48,-.2,true);
+   detail(m,()=>{box(m,.1,.4,0,.12,-.3,1.7);box(m,0,.5,0,.04,1.55,1.75);});
+   tree(m,-2.3,-.2,.5);tree(m,-2.1,-1.7,.42);tree(m,2.7,-1.9,.38);}},
+ {id:'village',no:'C-02',cat:'Scene',name:'Village Square',mm:34000,build(m){
+   place(m,'chapel',0,-1.3,.8);
+   place(m,'villa',2,.3,.6,-Math.PI/2);
+   place(m,'cabin',-1.9,.2,.6,1.2);place(m,'cabin',-.6,1.5,.55,.15);
+   detail(m,()=>{lathe(m,[[.2,0],[.2,.22]],10,0,.35,.25);box(m,.31,.39,.22,.6,.21,.29);});
+   tree(m,1.3,1.7,.42);tree(m,-2.4,-1.3,.5);tree(m,2.5,-1.6,.45);tree(m,.9,-.2,.32);}},
+ {id:'acropolis',no:'C-03',cat:'Scene',name:'Temple Hill',mm:52000,build(m){
+   place(m,'zig',-1.7,-.4,.9);
+   place(m,'temple',.6,-.6,.7);
+   place(m,'rotunda',1.45,1.15,.55);
+   tree(m,-.9,1.3,.45);tree(m,-2.3,1.1,.4);tree(m,.1,1.6,.38);tree(m,-.4,-1.6,.35);}},
+ {id:'city',no:'C-04',cat:'Scene',name:'City Block',mm:180000,build(m){
+   place(m,'tower',.2,-.5,.8);
+   place(m,'tower',1.35,.45,.55,.3);
+   place(m,'villa',-1.35,.7,.5,.4);
+   detail(m,()=>{box(m,-1.9,-.7,0,.45,-1.5,-.5);box(m,.9,1.9,0,.3,-1.7,-.85);box(m,-.4,.6,0,.18,.9,1.6);});
+   tree(m,-2.2,1.5,.32);tree(m,-.6,1.7,.3);tree(m,2.2,1.5,.3);}},
+ {id:'garden',no:'C-05',cat:'Scene',name:'Pagoda Garden',mm:40000,build(m){
+   place(m,'pagoda',0,-.7,.8);
+   place(m,'pagoda',1.75,.7,.45,.5);
+   place(m,'cabin',-1.7,.6,.5,.9);
+   detail(m,()=>{box(m,-.25,.25,0,.06,.6,1.9);lathe(m,[[.12,0],[.12,.35],[.2,.38],[0,.5]],4,Math.PI/4,.6,1.5);});
+   tree(m,-2.2,-1,.45);tree(m,-.9,1.7,.35);tree(m,1.4,-1.6,.42);tree(m,2.9,-1.3,.36);}}
+);
+
+
 function finalize(s){
   const m=mesh();s.build(m);
   let lo=[1e9,1e9,1e9],hi=[-1e9,-1e9,-1e9];
@@ -344,18 +384,26 @@ function finalize(s){
   for(let a=0;a<F;a++)for(let b=0;b<F;b++){if(a===b)continue;const B=m.F[b];let mn=1e9,mx=-1e9;
     for(const i of m.F[a].v){const d=dot(sub(m.P[i],B.o),B.n);mn=Math.min(mn,d);mx=Math.max(mx,d);}
     m.side[a*F+b]=mx<=1e-4&&mn<-1e-4?-1:mn>=-1e-4&&mx>1e-4?1:0;}
-  /* numbering: a walk along the edges that visits every dot once, where one exists */
+  /* numbering: walk each connected piece along its edges (visiting every dot once where possible),
+     then hop to the nearest dot of the next piece */
   const dots=[];for(let i=0;i<n;i++)if(m.D[i])dots.push(i);const nd=dots.length;
+  const comp=new Int32Array(n).fill(-1);let nc=0;
+  for(const d0 of dots){if(comp[d0]>=0)continue;const q=[d0];comp[d0]=nc;while(q.length){const a=q.pop();for(const b of adj[a])if(comp[b]<0){comp[b]=nc;q.push(b);}}nc++;}
   let start=dots[0];for(const i of dots)if(m.P[i][1]<m.P[start][1]-1e-6||(Math.abs(m.P[i][1]-m.P[start][1])<1e-6&&m.P[i][0]<m.P[start][0]))start=i;
   const vis=new Uint8Array(n),free=i=>{let d=0;for(const j of adj[i])if(!vis[j])d++;return d;};
-  let path=[start],steps=0;vis[start]=1;
-  const dfs=()=>{if(path.length===nd)return true;if(++steps>60000)return false;
-    const cand=[...adj[path[path.length-1]]].filter(j=>!vis[j]).sort((a,b)=>free(a)-free(b));
-    for(const j of cand){vis[j]=1;path.push(j);if(dfs())return true;path.pop();vis[j]=0;}return false;};
-  if(!dfs()){vis.fill(0);path=[start];vis[start]=1;
-    while(path.length<nd){const cur=path[path.length-1];let cand=[...adj[cur]].filter(j=>!vis[j]).sort((a,b)=>free(a)-free(b));
-      let nx=cand[0];if(nx===undefined){let bd=1e9;for(const j of dots)if(!vis[j]){const d=len(sub(m.P[j],m.P[cur]));if(d<bd){bd=d;nx=j;}}}
-      vis[nx]=1;path.push(nx);}}
+  const nearest=(from,ok)=>{let bd=1e9,nx=-1;for(const j of dots)if(!vis[j]&&ok(j)){const d=len(sub(m.P[j],m.P[from]));if(d<bd){bd=d;nx=j;}}return nx;};
+  const path=[];let cur=start;
+  while(path.length<nd){
+    const cc=comp[cur],cn=dots.filter(i=>comp[i]===cc).length,base=path.length;let steps=0;
+    vis[cur]=1;path.push(cur);
+    const dfs=()=>{if(path.length-base===cn)return true;if(++steps>20000)return false;
+      const cand=[...adj[path[path.length-1]]].filter(j=>!vis[j]).sort((a,b)=>free(a)-free(b));
+      for(const j of cand){vis[j]=1;path.push(j);if(dfs())return true;path.pop();vis[j]=0;}return false;};
+    if(!dfs()){for(let k=base;k<path.length;k++)vis[path[k]]=0;path.length=base;vis[cur]=1;path.push(cur);
+      while(path.length-base<cn){const c=path[path.length-1];const cand=[...adj[c]].filter(j=>!vis[j]).sort((a,b)=>free(a)-free(b));
+        const nx=cand.length?cand[0]:nearest(c,j=>comp[j]===cc);vis[nx]=1;path.push(nx);}}
+    if(path.length<nd)cur=nearest(path[path.length-1],()=>true);
+  }
   m.order=path;m.rank=new Int32Array(n).fill(-1);path.forEach((v,k)=>m.rank[v]=k);
   m.jump=path.map((v,k)=>k>0&&!adj[v].has(path[k-1]));
   return m;
@@ -404,7 +452,8 @@ function loadSheet(i){
   st.mode=st.done===M.order.length?'colour':'connect';st.rubber=null;st.wrong=null;
   st.yaw=ISO[0];st.pitch=ISO[1];st.zoom=1;rebuildOps();
   /* open on a view where the first dot can be seen */
-  if(st.done===0)for(let q=0;q<4;q++){st.yaw=ISO[0]+q*Math.PI/2;project();if(visible(M.order[0]))break;}
+  if(st.done===0)for(let q=0;q<4;q++){st.yaw=ISO[0]+q*Math.PI/2;project();occBoxes();if(visible(M.order[0]))break;}
+  visKey='';
   hud();dirty=true;
 }
 function rebuildOps(){faceOps=M.F.map(()=>[]);freeOps=[];for(const o of st.ops){
@@ -423,7 +472,12 @@ function project(){
 function onFace(f,x,y){ if(Math.abs(f.nw)<0.02)return null;
   const dx=x-f.ox,dy=y-f.oy,a=(dx*f.vy-dy*f.vx)/f.det,b=(f.ux*dy-f.uy*dx)/f.det;
   return inPoly(f.L,a,b)?{a,b,depth:f.d+a*f.du+b*f.dv}:null;}
-function visible(i){for(let fi=0;fi<M.F.length;fi++){if(!M.F[fi].occ||M.incident[i].has(fi))continue;
+let visKey='';
+/* screen bounds of every occluding face, so the visibility test can skip faces nowhere near a dot */
+function occBoxes(){for(const f of M.F){if(!f.occ)continue;f.bx0=f.by0=1e9;f.bx1=f.by1=-1e9;
+  for(const v of f.v){f.bx0=Math.min(f.bx0,SX[v]);f.bx1=Math.max(f.bx1,SX[v]);f.by0=Math.min(f.by0,SY[v]);f.by1=Math.max(f.by1,SY[v]);}}}
+function visible(i){const x=SX[i],y=SY[i];for(let fi=0;fi<M.F.length;fi++){const f=M.F[fi];if(!f.occ||M.incident[i].has(fi))continue;
+  if(f.bx0!==undefined&&(x<f.bx0||x>f.bx1||y<f.by0||y>f.by1))continue;
   const h=onFace(M.F[fi],SX[i],SY[i]);if(h&&h.depth>SZ[i]+2e-3)return false;}return true;}
 function pickFace(x,y){let best=null;M.F.forEach((f,fi)=>{if(!f.sheet&&f.nw<=0)return;const h=onFace(f,x,y);
   if(h&&(!best||h.depth>best.depth)){best=h;best.fi=fi;}});return best;}
@@ -571,23 +625,29 @@ function drawPath(alphaJump){
   ctx.setLineDash([]);ctx.globalAlpha=1;
 }
 function drawDots(alpha,now){
-  const N=M.order.length;ctx.textAlign='center';ctx.textBaseline='middle';
+  const N=M.order.length,labels=[];ctx.textAlign='center';ctx.textBaseline='middle';
   for(let i=0;i<M.P.length;i++){const k=M.rank[i];if(k<0)continue;const x=SX[i],y=SY[i],v=VIS[i],cur=k===st.done-1;
     let dx=x-cx,dy=y-cy;const l=Math.hypot(dx,dy)||1;dx/=l;dy/=l;if(l<4){dx=.7;dy=-.7;}
     if(k<st.done&&!cur){ctx.globalAlpha=alpha*(v?.9:.35);ctx.fillStyle=col.ink;ctx.beginPath();ctx.arc(x,y,2.6,0,7);ctx.fill();continue;}
     if(cur){const pulse=(Math.sin(now/420)+1)/2;ctx.globalAlpha=alpha*(.12+.1*pulse);ctx.fillStyle=col.accent;ctx.beginPath();ctx.arc(x,y,13+4*pulse,0,7);ctx.fill();
       ctx.globalAlpha=alpha;ctx.beginPath();ctx.arc(x,y,6,0,7);ctx.fill();ctx.fillStyle=col.solid;ctx.beginPath();ctx.arc(x,y,2.2,0,7);ctx.fill();continue;}
     if(!v){ctx.globalAlpha=alpha*.28;ctx.fillStyle=col.ink;ctx.beginPath();ctx.arc(x,y,1.8,0,7);ctx.fill();continue;}
-    /* a waiting dot: a soft ring with its number on a little tag */
+    /* a waiting dot: a soft ring; its number is labelled in a second pass */
     ctx.globalAlpha=alpha;ctx.fillStyle=col.solid;ctx.strokeStyle=col.ink;ctx.lineWidth=1.6;
     ctx.beginPath();ctx.arc(x,y,5,0,7);ctx.fill();ctx.stroke();
-    const next=k===st.done,label=String(k+1),lx=x+dx*21,ly=y+dy*19;
-    ctx.font=(next?'700 ':'600 ')+'12px '+SANS;const tw=Math.max(22,ctx.measureText(label).width+12);
-    ctx.save();ctx.shadowColor='rgba(20,30,36,.16)';ctx.shadowBlur=6;ctx.shadowOffsetY=1;
-    ctx.fillStyle=next?col.accent:col.solid;ctx.globalAlpha=alpha*(next?1:.95);pill(lx-tw/2,ly-10,tw,20);ctx.fill();ctx.restore();
-    ctx.globalAlpha=alpha;ctx.fillStyle=next?col.solid:col.ink;ctx.fillText(label,lx,ly+.5);
-    if(k===0&&st.done===0){ctx.fillStyle=col.accent;ctx.font='700 10px '+SANS;ctx.fillText('Start here',lx,ly+21);}
+    labels.push([k,x+dx*21,y+dy*19]);
   }
+  /* labels: the next ten numbers get full tags and always show; later numbers are quiet text,
+     drawn only where they don't collide with a label already placed */
+  labels.sort((a,b)=>a[0]-b[0]);const placed=[],hit=(x0,y0,x1,y1)=>placed.some(r=>x0<r[2]&&x1>r[0]&&y0<r[3]&&y1>r[1]);
+  for(const [k,lx,ly] of labels){const label=String(k+1),next=k===st.done,soon=k<st.done+10;
+    if(soon){ctx.font=(next?'700 ':'600 ')+'12px '+SANS;const tw=Math.max(22,ctx.measureText(label).width+12);
+      ctx.save();ctx.shadowColor='rgba(20,30,36,.16)';ctx.shadowBlur=6;ctx.shadowOffsetY=1;
+      ctx.fillStyle=next?col.accent:col.solid;ctx.globalAlpha=alpha;pill(lx-tw/2,ly-10,tw,20);ctx.fill();ctx.restore();
+      ctx.globalAlpha=alpha;ctx.fillStyle=next?col.solid:col.ink;ctx.fillText(label,lx,ly+.5);placed.push([lx-tw/2,ly-10,lx+tw/2,ly+10]);
+      if(k===0&&st.done===0){ctx.fillStyle=col.accent;ctx.font='700 10px '+SANS;ctx.fillText('Start here',lx,ly+21);}}
+    else{ctx.font='600 10px '+SANS;const tw=ctx.measureText(label).width+4;if(hit(lx-tw/2,ly-7,lx+tw/2,ly+7))continue;
+      ctx.globalAlpha=alpha*.55;ctx.fillStyle=col.ink;ctx.fillText(label,lx,ly);placed.push([lx-tw/2,ly-7,lx+tw/2,ly+7]);}}
   ctx.globalAlpha=1;
   if(st.rubber&&st.done>0&&st.done<N){const a=M.order[st.done-1];ctx.strokeStyle=col.accent;ctx.lineWidth=2.2;ctx.lineCap='round';line(SX[a],SY[a],st.rubber[0],st.rubber[1]);}
   if(st.locateAt&&now-st.locateAt<2200&&st.done<N){const i=M.order[st.done],t=((now-st.locateAt)%900)/900;
@@ -599,7 +659,10 @@ function drawDots(alpha,now){
 
 function render(now){
   project();drawSheet();
-  if(st.mode==='connect'){for(let i=0;i<M.P.length;i++)VIS[i]=M.rank[i]>=0&&visible(i);drawPath(1);drawDots(1,now);}
+  if(st.mode==='connect'){const key=[st.sheet,st.yaw,st.pitch,st.zoom,W,H].join();
+    if(key!==visKey){visKey=key;occBoxes();
+      for(let i=0;i<M.P.length;i++)VIS[i]=M.rank[i]>=0&&visible(i);}
+    drawPath(1);drawDots(1,now);}
   else if(st.mode==='reveal'){const t=Math.min(1,(now-st.revealAt)/1700),e=t*t*(3-2*t);
     drawShadow(e);drawSolid(e);drawPath(1-e);for(let i=0;i<M.P.length;i++)VIS[i]=true;drawDots(1-e,now);
     if(t>=1){st.mode='colour';hud();}}
